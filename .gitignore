@@ -1,0 +1,5 @@
+.godot/
+*.import
+build/
+# Логи .github/scripts/test_and_build.sh
+*.log
