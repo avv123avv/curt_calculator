@@ -33,11 +33,13 @@ switch with the **English / Русский** button or the **L** key.
 | V | click the switch on the carriage | counter reverse (for division and square root) |
 | X | — | sliders to 0 |
 | K | “Cutaway” | transparent body, stepped drum and pinions |
-| T | “Type I / II” | switch the model |
+| T | “Type II” / “Type I” | switch the model |
 | S | “CSV” | log to `user://curta_log.csv` (`n,op,carriage,setting,result,counter`) |
 | Home | drag empty space / right drag, wheel | reset / orbit / zoom the view |
 | F1 | “Manual” | in-game manual (←/→ pages, O opens the PDF) |
 
+The button row at the top (as in lukyanov_integrator) repeats the main actions: Turn, Subtract / Add, ◀ Carriage ▶, Clear,
+Reverse, Cutaway, Type, CSV, Manual and the language; the active mode is outlined in yellow.
 While the crank is away from home the carriage, crank mode and clearing lever are locked, as on the real machine.
 
 ### Manual
@@ -95,11 +97,13 @@ The screenshots in the manual and this README come from `godot --path . -s docs/
 | V | щелчок по переключателю на каретке | реверс счётчика (для деления и корня) |
 | X | — | ползунки в 0 |
 | K | «Разрез» | прозрачный корпус, ступенчатый вал и шестерни |
-| T | «Тип I / II» | сменить модель |
+| T | «Тип II» / «Тип I» | сменить модель |
 | S | «CSV» | журнал в `user://curta_log.csv` (`n,op,carriage,setting,result,counter`) |
 | Home | тянуть по пустому месту / правой кнопкой, колесо | исходный вид / вращение / масштаб |
 | F1 | «Инструкция» | инструкция внутри игры (←/→ — страницы, O — открыть PDF) |
 
+Ряд кнопок сверху (как в lukyanov_integrator) повторяет основные действия: Оборот, Вычитание / Сложение, ◀ Каретка ▶,
+Сброс, Реверс, Разрез, Тип, CSV, Инструкция и язык; включённый режим обведён жёлтой рамкой.
 Пока ручка не вернулась «домой», каретка, режим ручки и рычаг сброса заблокированы — как на настоящей машине.
 
 ### Инструкция

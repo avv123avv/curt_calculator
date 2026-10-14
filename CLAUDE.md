@@ -34,9 +34,14 @@ tests, CI/release workflows, F1 manual from `docs/build_instruction.py`).
   complement rib on n ≤ 9 − r half a step lower; drum lifts `_step/2` in subtract mode.
   Picking: `pick(screen)` = ray vs `_parts` (local AABB / vertical cylinder), body occludes `inner` parts.
   Test helpers: `part_point(id)`, `screen_of(world)`, `press_button(id)`; `_process(dt)` drives all animation.
-  HUD is code-built Controls (status, right panel, two button rows, tooltip, toast, version, F1 overlay that
-  shows `docs/pages/<lang>/page_N.png`).
-- `tests/run_tests.gd` — 60 checks (incl. manual pages/PDFs exist, Shift+C): add/sub, 0−1, ×/÷ (counter reverse), √ by odd numbers (Toepler, sliders and
+  HUD copies lukyanov_integrator's layout and is drawn in `_draw_hud()` on one Control `_overlay`: status line
+  (FS_BIG, y 44), version at `RIG_RIGHT`, one row of flat buttons from `_buttons()` at `BTN_Y` 62 (hover = lighter,
+  active mode = yellow outline; wraps only if a row passes `RIG_RIGHT`), toast under the row, footer hints + yellow
+  "F1" line, register panel at `PANEL_X` 1440 behind a divider ("#" lines = headers). Clicks hit buttons before 3D.
+  The model is centred in the area left of the panel with an off-axis frustum (`frustum_offset`), not `h_offset`
+  (that moves the eye). Godot's `project_ray_*` ignore `frustum_offset`, so rays come from `ray_dir(screen)`.
+  F1 overlay (Controls) shows `docs/pages/<lang>/page_N.png`.
+- `tests/run_tests.gd` — 64 checks (incl. the button row: position, hover, click, active outline) (incl. manual pages/PDFs exist, Shift+C): add/sub, 0−1, ×/÷ (counter reverse), √ by odd numbers (Toepler, sliders and
   carriage shifted by k), counter carry/borrow, type switch, CSV, 3D drags (slider, crank incl. ratchet/lock,
   hub, carriage, reverse, clearing lever), cutaway picking, pinion n/10, orbit/zoom, buttons, i18n completeness
   (scans `I18n.t("…")` in the sources). Run: `godot --headless --path . --import` then
