@@ -349,17 +349,39 @@ func _test_3d() -> void:
 	# Смена типа и кнопки.
 	c.press_button("type")
 	_check(m.model_type == 2 and c._knobs.size() == 11 and c._result_labels.size() == 15, "тип II: 11 ползунков, 15 разрядов")
+	# В положении 0 крайний ползунок сбоку частично закрыт кромкой каретки — берём середину шкалы.
+	m.set_slider(10, 5)
 	_check(c.pick(c.screen_of(c.part_point("slider:10"))) == "slider:10", "тип II: пикинг старшего ползунка")
 	c.press_button("type")
 	_check(m.model_type == 1, "обратно тип I")
+
+	# Меню как в lukyanov_integrator: ряд кнопок сверху, подсветка под мышью, рамка у включённых.
+	var buttons: Array[Dictionary] = c._buttons()
+	var inside := true
+	for b in buttons:
+		var r: Rect2 = b["rect"]
+		inside = inside and r.position.y >= c.BTN_Y and r.end.x <= c.RIG_RIGHT
+	_check(inside and buttons[0]["rect"].position == Vector2(24, c.BTN_Y), "кнопки сверху слева, не заходят под панель")
+	var mode_rect: Rect2 = buttons[1]["rect"]
+	_mouse_move(c, mode_rect.get_center())
+	_check(c._hover == "btn:mode", "подсветка кнопки под мышью")
+	_mouse_button(c, mode_rect.get_center())
+	_mouse_button(c, mode_rect.get_center(), false)
+	_check(m.subtract and c._buttons()[1]["on"], "щелчок по кнопке «Вычитание» — рамка включённого режима")
+	_mouse_button(c, mode_rect.get_center())
+	_mouse_button(c, mode_rect.get_center(), false)
+	_check(not m.subtract, "повторный щелчок — снова сложение")
+	_mouse_move(c, Vector2(700, 600))
+
 	c.press_button("lang")
-	_check(I18n.current() == "en" and (c._buttons["turn"] as Button).text == "Turn (Enter)", "кнопка языка → английский")
+	_check(I18n.current() == "en" and c._buttons()[0]["text"] == "Turn" and c._buttons().back()["text"] == "Русский",
+			"кнопка языка → английский")
 	c.press_button("help")
-	var ru_pages := c._help_pages.size()
+	var en_pages := c._help_pages.size()
 	c._set_help(false)
 	c.press_button("lang")
 	c.press_button("help")
-	var en_pages := c._help_pages.size()
+	var ru_pages := c._help_pages.size()
 	_check(ru_pages > 0 and en_pages > 0, "страницы инструкции есть: ru %d, en %d" % [ru_pages, en_pages])
 	_check(FileAccess.file_exists("res://docs/instruction_ru.pdf") and FileAccess.file_exists("res://docs/instruction_en.pdf"),
 			"PDF инструкции на обоих языках в docs/")

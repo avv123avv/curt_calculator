@@ -26,6 +26,8 @@ const HELP_PDF := "res://docs/instruction_%s.pdf"
 const TURN_TIME := 0.6
 ## Ручку, отпущенную не дальше этого угла после «дома», фиксатор возвращает в ноль.
 const CRANK_DETENT := deg_to_rad(15.0)
+## Вертикальный угол обзора камеры, градусы.
+const VIEW_FOV := 35.0
 const ORBIT_SENS := 0.008
 const ZOOM_MIN := 8.0
 const ZOOM_MAX := 60.0
@@ -43,10 +45,21 @@ const C_COUNTER := Color(0.98, 0.62, 0.3)
 const C_ADD_TOOTH := Color(0.88, 0.72, 0.3)
 const C_SUB_TOOTH := Color(0.82, 0.3, 0.25)
 
+# Интерфейс — как в lukyanov_integrator (syringe_rig.gd): строка состояния и ряд кнопок сверху,
+# панель регистров справа за линией, подсказки и «F1» внизу.
 const C_TEXT := Color(0.92, 0.92, 0.92)
-const C_TEXT_DIM := Color(0.6, 0.62, 0.66)
+const C_TEXT_DIM := Color(0.55, 0.57, 0.6)
+const C_HEAD := Color(0.95, 0.8, 0.3)
+const C_BTN := Color(0.24, 0.26, 0.3)
+const C_BTN_HOVER := Color(0.34, 0.37, 0.43)
 const FS_SMALL := 20
 const FS := 24
+const FS_BIG := 30
+## Правая граница области модели и левый край панели регистров.
+const RIG_RIGHT := 1390.0
+const PANEL_X := 1440.0
+const BTN_Y := 62.0
+const BTN_H := 44.0
 
 var model: CurtaModel
 var selected := 0
@@ -108,13 +121,10 @@ var _mouse_pos := Vector2.ZERO
 
 # Интерфейс.
 var _hud: CanvasLayer
-var _status: Label
-var _panel_text: Label
-var _tooltip: Label
-var _toast: Label
+## Всё, кроме инструкции, рисуется на этом слое в _draw_hud().
+var _overlay: Control
+var _toast := ""
 var _toast_time := 0.0
-var _version: Label
-var _buttons: Dictionary = {}
 var _help: Control
 var _help_tex: TextureRect
 var _help_hint: Label
@@ -272,11 +282,9 @@ func _build_scene() -> void:
 	fill.light_energy = 0.5
 	add_child(fill)
 	_cam = Camera3D.new()
-	_cam.fov = 35.0
+	_cam.fov = VIEW_FOV
 	_cam.near = 0.5
 	_cam.far = 300.0
-	# Справа панель регистров — модель сдвинута влево.
-	_cam.h_offset = 2.2
 	add_child(_cam)
 
 
@@ -464,10 +472,10 @@ func _process(delta: float) -> void:
 	_drum_lift = move_toward(_drum_lift, _step * 0.5 if model.subtract else 0.0, delta * 2.0)
 	if _drag != "lever":
 		lever_angle = move_toward(lever_angle, 0.0, delta * 10.0)
-	if _toast_time > 0.0:
-		_toast_time -= delta
-		_toast.visible = _toast_time > 0.0
+	_toast_time = maxf(_toast_time - delta, 0.0)
 	_apply_pose()
+	if _overlay != null:
+		_overlay.queue_redraw()
 
 
 ## Положения деталей по модели и состоянию анимации.
@@ -599,7 +607,7 @@ func _locked_toast() -> bool:
 func _reset_view() -> void:
 	_yaw = 0.0
 	_pitch_cam = -0.55
-	_dist = 19.0 if model.model_type == 1 else 22.0
+	_dist = 21.5 if model.model_type == 1 else 25.0
 	_target = Vector3(0, (_body_h + _car_h) * 0.55, 0)
 	_update_camera()
 
@@ -609,6 +617,12 @@ func _update_camera() -> void:
 	_dist = clampf(_dist, ZOOM_MIN, ZOOM_MAX)
 	var off := Basis.from_euler(Vector3(_pitch_cam, _yaw, 0)) * Vector3(0, 0, _dist)
 	_cam.transform = Transform3D(Basis(), _target + off).looking_at(_target, Vector3.UP)
+	# Модель — посередине области слева от панели (до RIG_RIGHT), а не экрана. Сдвигаем
+	# пирамиду видимости, а не камеру (h_offset сдвинул бы глаз и изменил ракурс).
+	var size := 2.0 * _cam.near * tan(deg_to_rad(VIEW_FOV) * 0.5)
+	_cam.projection = Camera3D.PROJECTION_FRUSTUM
+	_cam.size = size
+	_cam.frustum_offset = Vector2(size * 0.5 * (960.0 - RIG_RIGHT * 0.5) / 540.0, 0.0)
 
 
 # --- Пикинг ----------------------------------------------------------------
@@ -654,8 +668,8 @@ func _ray_part(p: Dictionary, o: Vector3, d: Vector3) -> float:
 ## Деталь под точкой экрана. В обычном виде корпус заслоняет внутренности,
 ## в разрезе он прозрачный и сам не ловится (кроме промаха по всему остальному).
 func pick(screen: Vector2) -> String:
-	var o := _cam.project_ray_origin(screen)
-	var d := _cam.project_ray_normal(screen)
+	var o := _cam.global_position
+	var d := ray_dir(screen)
 	var best := ""
 	var best_t := INF
 	var body_t := -1.0
@@ -686,13 +700,24 @@ func part_point(id: String) -> Vector3:
 	return Vector3.ZERO
 
 
+## Направление луча из глаза камеры через точку экрана. Считаем сами: project_ray_normal()
+## не учитывает frustum_offset, которым кадр сдвинут влево от панели.
+func ray_dir(screen: Vector2) -> Vector3:
+	var view := get_viewport().get_visible_rect().size
+	var hh := _cam.size * 0.5
+	var hw := hh * view.x / view.y
+	var local := Vector3(_cam.frustum_offset.x + (screen.x / view.x * 2.0 - 1.0) * hw,
+			_cam.frustum_offset.y + (1.0 - screen.y / view.y * 2.0) * hh, -_cam.near)
+	return (_cam.global_transform.basis * local).normalized()
+
+
 func screen_of(world: Vector3) -> Vector2:
 	return _cam.unproject_position(world)
 
 
 ## Пересечение луча с горизонтальной плоскостью y = h; null — нет.
 func _hit_plane_y(screen: Vector2, h: float) -> Variant:
-	return Plane(Vector3.UP, h).intersects_ray(_cam.project_ray_origin(screen), _cam.project_ray_normal(screen))
+	return Plane(Vector3.UP, h).intersects_ray(_cam.global_position, ray_dir(screen))
 
 
 ## Угол точки экрана вокруг оси машины на высоте h (как у _polar), NAN — мимо.
@@ -712,7 +737,7 @@ func _slider_value_at(i: int, screen: Vector2) -> int:
 	n.y = 0.0
 	if n.length() < 1e-4:
 		return model.sliders[i]
-	var hit: Variant = Plane(n.normalized(), p0).intersects_ray(_cam.project_ray_origin(screen), _cam.project_ray_normal(screen))
+	var hit: Variant = Plane(n.normalized(), p0).intersects_ray(_cam.global_position, ray_dir(screen))
 	if hit == null:
 		return model.sliders[i]
 	return clampi(roundi((_slot_top - (hit as Vector3).y) / _step), 0, 9)
@@ -818,7 +843,9 @@ func _mouse_button(ev: InputEventMouseButton) -> bool:
 			_drag = "orbit" if ev.pressed else ""
 			return true
 		MOUSE_BUTTON_LEFT:
-			if ev.pressed:
+			if ev.pressed and _button_at(ev.position) != "":
+				press_button(_button_at(ev.position))
+			elif ev.pressed:
 				_press(ev.position)
 			else:
 				# Фиксатор «дома»: ручка, отпущенная чуть дальше нуля, встаёт на место.
@@ -862,7 +889,8 @@ func _press(pos: Vector2) -> void:
 func _mouse_motion(ev: InputEventMouseMotion) -> void:
 	_mouse_pos = ev.position
 	if _drag == "":
-		_set_hover(pick(ev.position))
+		var b := _button_at(ev.position)
+		_set_hover("btn:" + b if b != "" else pick(ev.position))
 		return
 	if _drag == "orbit":
 		_yaw -= ev.relative.x * ORBIT_SENS
@@ -909,13 +937,8 @@ func _mouse_motion(ev: InputEventMouseMotion) -> void:
 
 func _set_hover(id: String) -> void:
 	_hover = id
-	var text := _tooltip_text(id)
-	_tooltip.text = text
-	_tooltip.visible = text != ""
-	if _tooltip.visible:
-		_tooltip.reset_size()
-		var view := get_viewport().get_visible_rect().size
-		_tooltip.position = (_mouse_pos + Vector2(22, 18)).clamp(Vector2.ZERO, view - _tooltip.size)
+	if _overlay != null:
+		_overlay.queue_redraw()
 
 
 func _tooltip_text(id: String) -> String:
@@ -949,70 +972,18 @@ func _tooltip_text(id: String) -> String:
 func _build_hud() -> void:
 	_hud = CanvasLayer.new()
 	add_child(_hud)
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hud.add_child(root)
-
-	_status = _hud_label(root, FS, C_TEXT)
-	_status.position = Vector2(24, 16)
-
-	_version = _hud_label(root, FS_SMALL, C_TEXT_DIM)
-	_version.text = "v%s" % str(ProjectSettings.get_setting("application/config/version", "dev"))
-	_version.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_version.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	_version.position = Vector2(1920 - 220, 10)
-	_version.size = Vector2(200, 30)
-
-	var panel := PanelContainer.new()
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.position = Vector2(1480, 60)
-	panel.custom_minimum_size = Vector2(420, 0)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.09, 0.1, 0.82)
-	sb.set_corner_radius_all(8)
-	sb.set_content_margin_all(16)
-	panel.add_theme_stylebox_override("panel", sb)
-	root.add_child(panel)
-	_panel_text = _hud_label(panel, FS_SMALL, C_TEXT)
-
-	var rows := [
-		["turn", "mode", "car_left", "car_right", "clear", "sliders", "reverse"],
-		["cutaway", "type", "csv", "lang", "help", "view"],
-	]
-	for r in rows.size():
-		var box := HBoxContainer.new()
-		box.add_theme_constant_override("separation", 8)
-		box.position = Vector2(24, 1080 - 128 + r * 60)
-		root.add_child(box)
-		for id: String in rows[r]:
-			var b := Button.new()
-			b.focus_mode = Control.FOCUS_NONE
-			b.custom_minimum_size = Vector2(0, 50)
-			b.add_theme_font_size_override("font_size", FS_SMALL)
-			b.pressed.connect(press_button.bind(id))
-			box.add_child(b)
-			_buttons[id] = b
-
-	_tooltip = _hud_label(root, FS_SMALL, C_TEXT)
-	var tsb := StyleBoxFlat.new()
-	tsb.bg_color = Color(0.02, 0.02, 0.03, 0.88)
-	tsb.set_content_margin_all(8)
-	_tooltip.add_theme_stylebox_override("normal", tsb)
-	_tooltip.visible = false
-
-	_toast = _hud_label(root, FS, C_SELECT)
-	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast.position = Vector2(0, 230)
-	_toast.size = Vector2(1480, 40)
-	_toast.visible = false
+	_overlay = Control.new()
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.draw.connect(_draw_hud)
+	_hud.add_child(_overlay)
 
 	_help = ColorRect.new()
 	(_help as ColorRect).color = Color(0.05, 0.05, 0.06, 0.94)
 	_help.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_help.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_help.visible = false
-	root.add_child(_help)
+	_hud.add_child(_help)
 	_help_tex = TextureRect.new()
 	_help_tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_help_tex.offset_bottom = -30
@@ -1020,37 +991,54 @@ func _build_hud() -> void:
 	_help_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_help_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_help.add_child(_help_tex)
-	_help_hint = _hud_label(_help, FS_SMALL, C_TEXT_DIM)
+	_help_hint = Label.new()
+	_help_hint.add_theme_font_size_override("font_size", FS_SMALL)
+	_help_hint.add_theme_color_override("font_color", C_TEXT_DIM)
+	_help_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_help_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_help_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_help.add_child(_help_hint)
 	_help_hint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
-func _hud_label(parent: Control, size: int, color: Color) -> Label:
-	var l := Label.new()
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(l)
-	return l
+## Кнопки: id, текст, прямоугольник, «включено». Ширина по тексту; не влезли до RIG_RIGHT — новый ряд.
+func _buttons() -> Array[Dictionary]:
+	var font := ThemeDB.fallback_font
+	var defs := [
+		["turn", I18n.t("Оборот"), false],
+		# Кнопка режима показывает, на что переключит; рамка — «сейчас вычитание».
+		["mode", I18n.t("Сложение") if model.subtract else I18n.t("Вычитание"), model.subtract],
+		["car_left", I18n.t("◀ Каретка"), false],
+		["car_right", I18n.t("Каретка ▶"), false],
+		["clear", I18n.t("Сброс"), false],
+		["reverse", I18n.t("Реверс"), model.counter_reverse],
+		["cutaway", I18n.t("Разрез"), cutaway],
+		["type", I18n.t("Тип II") if model.model_type == 1 else I18n.t("Тип I"), false],
+		["csv", I18n.t("CSV"), false],
+		["help", I18n.t("Инструкция"), false],
+		# Кнопка показывает язык, на который переключит.
+		["lang", "English" if I18n.current() == "ru" else "Русский", false],
+	]
+	var out: Array[Dictionary] = []
+	var x := 24.0
+	var y := BTN_Y
+	for d in defs:
+		var w := font.get_string_size(d[1], HORIZONTAL_ALIGNMENT_LEFT, -1, FS).x + 18.0
+		if x + w > RIG_RIGHT:
+			x = 24.0
+			y += BTN_H + 8.0
+		out.append({"id": d[0], "text": d[1], "rect": Rect2(x, y, w, BTN_H), "on": d[2]})
+		x += w + 8.0
+	return out
 
 
-func _button_text(id: String) -> String:
-	match id:
-		"turn": return I18n.t("Оборот (Enter)")
-		"mode": return I18n.t("Ручка вниз: + (Tab)") if model.subtract else I18n.t("Ручка вверх: − (Tab)")
-		"car_left": return I18n.t("◀ Каретка ([)")
-		"car_right": return I18n.t("Каретка ▶ (])")
-		"clear": return I18n.t("Сброс (C)")
-		"sliders": return I18n.t("Ползунки в 0 (X)")
-		"reverse": return I18n.t("Реверс счётчика (V)")
-		"cutaway": return I18n.t("Разрез (K)")
-		"type": return I18n.t("Тип I / II (T)")
-		"csv": return I18n.t("CSV (S)")
-		"lang": return I18n.t("English (L)")
-		"help": return I18n.t("Инструкция (F1)")
-		"view": return I18n.t("Вид (Home)")
-	return id
+func _button_at(pos: Vector2) -> String:
+	if _help_open:
+		return ""
+	for b in _buttons():
+		if (b["rect"] as Rect2).has_point(pos):
+			return b["id"]
+	return ""
 
 
 func press_button(id: String) -> void:
@@ -1087,44 +1075,103 @@ func _group(s: String) -> String:
 
 
 func _refresh_hud() -> void:
-	if _status == null:
-		return
-	var mode := I18n.t("ВЫЧИТАНИЕ (ручка вытянута)") if model.subtract else I18n.t("сложение (ручка вдвинута)")
-	_status.text = "\n".join(PackedStringArray([
-		I18n.t("Курта, тип %s") % ("I" if model.model_type == 1 else "II"),
-		I18n.t("Режим: %s") % mode,
-		I18n.t("Каретка: позиция %d из %d") % [model.carriage + 1, model.carriage_positions()],
-		I18n.t("Счётчик: %s") % (I18n.t("реверс (вычитание считает +1)") if model.counter_reverse else I18n.t("обычный")),
-	]))
-	_status.add_theme_color_override("font_color", C_SUB.lightened(0.3) if model.subtract else C_TEXT)
+	if _overlay != null:
+		_overlay.queue_redraw()
+
+
+func _show_toast(text: String) -> void:
+	_toast = text
+	_toast_time = 4.0
+	_refresh_hud()
+
+
+func _draw_hud() -> void:
+	var font := ThemeDB.fallback_font
+	var ci := _overlay
+	# Строка состояния и версия (в репозитории "dev", в релизе её проставляет CI).
+	var status := I18n.t("Курта, тип %s    %s    каретка %d / %d%s") % [
+		"I" if model.model_type == 1 else "II",
+		I18n.t("ВЫЧИТАНИЕ") if model.subtract else I18n.t("сложение"),
+		model.carriage + 1, model.carriage_positions(),
+		I18n.t("    [РЕВЕРС СЧЁТЧИКА]") if model.counter_reverse else ""]
+	ci.draw_string(font, Vector2(24, 44), status, HORIZONTAL_ALIGNMENT_LEFT, RIG_RIGHT - 340, FS_BIG,
+			C_SUB.lightened(0.35) if model.subtract else C_TEXT)
+	var version := str(ProjectSettings.get_setting("application/config/version", "dev"))
+	ci.draw_string(font, Vector2(RIG_RIGHT - 300, 40), version if version == "dev" else "v" + version,
+			HORIZONTAL_ALIGNMENT_RIGHT, 300, FS_SMALL, C_TEXT_DIM)
+	# Кнопки: подсветка под мышью, рамка — включённый режим.
+	var buttons := _buttons()
+	for b in buttons:
+		var r: Rect2 = b["rect"]
+		var on: bool = b["on"]
+		ci.draw_rect(r, C_BTN_HOVER if _hover == "btn:" + str(b["id"]) else C_BTN)
+		ci.draw_rect(r, C_HEAD if on else C_TEXT_DIM, false, 2.0 if on else 1.0)
+		ci.draw_string(font, Vector2(r.position.x, r.position.y + r.size.y * 0.5 + FS * 0.36), str(b["text"]),
+				HORIZONTAL_ALIGNMENT_CENTER, r.size.x, FS, C_TEXT)
+	if _toast_time > 0.0:
+		var bottom: float = (buttons.back()["rect"] as Rect2).end.y
+		ci.draw_string(font, Vector2(24, bottom + 34), _toast, HORIZONTAL_ALIGNMENT_LEFT, RIG_RIGHT - 24, FS_SMALL, C_HEAD)
+	_draw_footer(font)
+	_draw_panel(font)
+	_draw_tooltip(font)
+
+
+## Строки панели: «#» в начале — заголовок (крупнее, жёлтый).
+func _draw_lines(font: Font, x: float, y: float, lines: PackedStringArray, step: float) -> float:
+	for line in lines:
+		var head := line.begins_with("#")
+		var text := line.substr(1) if head else line
+		_overlay.draw_string(font, Vector2(x, y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_BIG if head else FS,
+				C_HEAD if head else C_TEXT)
+		y += step + (8.0 if head else 0.0)
+	return y
+
+
+## Подробности — в инструкции (F1), здесь только подсказка.
+func _draw_footer(font: Font) -> void:
 	var lines := PackedStringArray([
-		I18n.t("Установка"), "  " + _group(CurtaModel.digits_string(model.sliders)) + "   = %d" % model.slider_value(),
-		I18n.t("Результат"), "  " + _group(CurtaModel.digits_string(model.result)),
-		"  = %d" % model.result_signed(),
-		I18n.t("Счётчик оборотов"), "  " + _group(CurtaModel.digits_string(model.counter)) + "   = %d" % model.counter_signed(),
+		I18n.t("Мышь: тяните ползунки, крутите ручку, поворачивайте каретку; щелчок по головке ручки — вычитание."),
+		I18n.t("Клавиши: 0–9 набор, Enter оборот, Tab ±, [ ] каретка, C / Shift+C сброс, X, V, K, T, S, L, Home."),
+	])
+	for i in lines.size():
+		_overlay.draw_string(font, Vector2(24, 935 + i * 38), lines[i], HORIZONTAL_ALIGNMENT_LEFT, RIG_RIGHT - 24, FS, C_TEXT)
+	_overlay.draw_string(font, Vector2(24, 1040), I18n.t("F1 — инструкция: устройство и приёмы счёта"),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, FS_BIG, C_HEAD)
+
+
+func _draw_panel(font: Font) -> void:
+	_overlay.draw_line(Vector2(PANEL_X - 20, 14), Vector2(PANEL_X - 20, 1066), C_TEXT_DIM, 1.5)
+	var lines := PackedStringArray([
+		I18n.t("#Установка"),
+		_group(CurtaModel.digits_string(model.sliders)) + "   = %d" % model.slider_value(),
+		"",
+		I18n.t("#Результат"),
+		_group(CurtaModel.digits_string(model.result)),
+		"= %d" % model.result_signed(),
+		"",
+		I18n.t("#Счётчик оборотов"),
+		_group(CurtaModel.digits_string(model.counter)) + "   = %d" % model.counter_signed(),
 		I18n.t("Оборотов: %d") % model.turns,
 		"",
-		I18n.t("Последние операции:"),
+		I18n.t("#Последние операции"),
 	])
 	var first := maxi(1, model.log_rows.size() - 8)
 	for r in range(first, model.log_rows.size()):
 		var c := model.log_rows[r].split(",")
-		lines.append("  #%s  %s  %s %s  →  %s" % [c[0], c[1], I18n.t("поз."), c[2], c[4].lstrip("0") if c[4].lstrip("0") != "" else "0"])
-	_panel_text.text = "\n".join(lines)
-	for id: String in _buttons:
-		(_buttons[id] as Button).text = _button_text(id)
-	(_buttons["mode"] as Button).add_theme_color_override("font_color", C_SUB.lightened(0.35) if model.subtract else C_TEXT)
-	(_buttons["cutaway"] as Button).add_theme_color_override("font_color", C_SELECT if cutaway else C_TEXT)
-	if _hover != "":
-		_set_hover(_hover)
+		var res := c[4].lstrip("0")
+		lines.append("%s.  %s  %s %s  →  %s" % [c[0], c[1], I18n.t("поз."), c[2], res if res != "" else "0"])
+	_draw_lines(font, PANEL_X, 50, lines, 38)
 
 
-func _show_toast(text: String) -> void:
-	if _toast == null:
+## Подсказка к детали под мышью.
+func _draw_tooltip(font: Font) -> void:
+	var text := _tooltip_text(_hover)
+	if text == "" or _drag != "":
 		return
-	_toast.text = text
-	_toast.visible = true
-	_toast_time = 3.0
+	var size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_SMALL) + Vector2(16, 12)
+	var pos := (_mouse_pos + Vector2(22, 18)).clamp(Vector2.ZERO, _overlay.size - size)
+	_overlay.draw_rect(Rect2(pos, size), Color(0.02, 0.02, 0.03, 0.88))
+	_overlay.draw_string(font, pos + Vector2(8, 6 + FS_SMALL * 0.8), text, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_SMALL, C_TEXT)
 
 
 # --- Инструкция (F1) -------------------------------------------------------
