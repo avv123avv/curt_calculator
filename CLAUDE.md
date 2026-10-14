@@ -9,7 +9,7 @@ tests, CI/release workflows, F1 manual from `docs/build_instruction.py`).
 - Viewport 1920×1080, stretch `canvas_items` + `keep`, `gl_compatibility`, Steam Deck target
   (touch → mouse emulation on).
 - UI strings in Russian wrapped in `I18n.t("…")`, English in `I18n.EN` (i18n.gd copied from
-  lukyanov_integrator; EN dictionary still mostly empty — fill it).
+  lukyanov_integrator). Every new string needs an EN entry — a test scans the sources for missing keys.
 
 ## Done
 - `curta_model.gd` (`class_name CurtaModel`, RefCounted, no rendering): Type I (8 sliders /
@@ -35,7 +35,7 @@ tests, CI/release workflows, F1 manual from `docs/build_instruction.py`).
   Picking: `pick(screen)` = ray vs `_parts` (local AABB / vertical cylinder), body occludes `inner` parts.
   Test helpers: `part_point(id)`, `screen_of(world)`, `press_button(id)`; `_process(dt)` drives all animation.
   HUD is code-built Controls (status, right panel, two button rows, tooltip, toast, version, F1 overlay that
-  shows `docs/pages/<lang>/page_N.png` — not built yet, shows a hint instead).
+  shows `docs/pages/<lang>/page_N.png`).
 - `tests/run_tests.gd` — 60 checks (incl. manual pages/PDFs exist, Shift+C): add/sub, 0−1, ×/÷ (counter reverse), √ by odd numbers (Toepler, sliders and
   carriage shifted by k), counter carry/borrow, type switch, CSV, 3D drags (slider, crank incl. ratchet/lock,
   hub, carriage, reverse, clearing lever), cutaway picking, pinion n/10, orbit/zoom, buttons, i18n completeness
@@ -75,10 +75,11 @@ tests, CI/release workflows, F1 manual from `docs/build_instruction.py`).
 - Before opening a PR run the tests; if the manual text or the model changed, rerun `docs/build_instruction.py`
   and commit the PDFs and pages (CI does not regenerate them — it needs fonts and pip packages).
 
+- GitHub: https://github.com/avv123avv/curt_calculator (public), labels `release:major`, `release:minor`,
+  `release:none` created; releases at https://github.com/avv123avv/curt_calculator/releases.
+
 ## TODO (next session)
-1. Create the GitHub repo `avv123avv/curt_calculator` and push (if not done yet), create labels
-   `release:major`, `release:minor`, `release:none`.
-2. Possible polish: setting-check digits on the carriage side window, real "+1" tens-complement tooth in the drum,
+1. Possible polish: setting-check digits on the carriage side window, real "+1" tens-complement tooth in the drum,
    clearing-lever ratchet, Steam Deck touch check.
 
 ## Notes
